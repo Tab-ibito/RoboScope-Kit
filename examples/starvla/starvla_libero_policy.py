@@ -10,8 +10,9 @@ from __future__ import annotations
 from dataclasses import replace
 
 import numpy as np
-from roboscope_kit import ActionChunk, Observation, PolicyCapabilities, SessionContext, run
 from starvla_policy import StarVLAPolicy, _build_example, _resize_image_with_opencv
+
+from roboscope_kit import ActionChunk, Observation, PolicyCapabilities, SessionContext, run
 
 
 def decode_actions(normalized: np.ndarray, statistics: dict) -> np.ndarray:
@@ -45,12 +46,11 @@ class StarVLALiberoPolicy(StarVLAPolicy):
         if normalized.shape != (1, 8, 7):
             raise ValueError(f"StarVLA returned action shape {normalized.shape}; expected (1, 8, 7)")
         actions = decode_actions(normalized[0], runtime.framework.norm_stats["franka"]["action"])
-        actions = np.array(actions, copy=True, order="C")
         for transform in runtime.config.transforms:
             transform.apply(actions)
         if not np.isfinite(actions).all():
             raise ValueError("StarVLA returned non-finite actions")
-        return ActionChunk(actions.astype(np.float32))
+        return ActionChunk(actions.astype(np.float32, copy=False))
 
 
 if __name__ == "__main__":

@@ -2,6 +2,13 @@
 
 Platform-only release notes from earlier versions are omitted; other changes relevant to the Kit are retained.
 
+## 0.8.0b67 - 2026-11-16
+
+- Avoid intermediate array bytes during JSON encoding. Keep decoded arrays writable and
+  independently owned.
+- Reduce temporary allocations in observation validation and array-size accounting without removing
+  protocol checks; remove the redundant post-connect guard and LIBERO action postprocessing copy.
+
 ## 0.8.0b39 - 2026-11-10
 
 - Prefer the existing negotiated MessagePack transport for LIBERO-Pro, with optional per-episode

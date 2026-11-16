@@ -170,8 +170,6 @@ class PolicyClient:
         if self._connection is None:
             with timing.span(f"client.{operation}.connect"):
                 self.connect()
-        if self._connection is None:
-            raise RuntimeError("policy connection is unavailable")
         request_id = str(uuid.uuid4())
         with timing.span(f"client.{operation}.send"):
             send_message(

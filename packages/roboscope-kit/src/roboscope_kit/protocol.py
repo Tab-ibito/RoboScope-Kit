@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import socket
 import struct
 from typing import Any, Literal
@@ -140,7 +141,7 @@ def _array(data: bytes, value: dict[str, Any]) -> np.ndarray:
     shape = tuple(int(dimension) for dimension in value["shape"])
     if any(dimension < 0 for dimension in shape):
         raise ProtocolError("array dimensions cannot be negative")
-    expected_size = int(np.prod(shape, dtype=np.int64)) * dtype.itemsize
+    expected_size = math.prod(shape) * dtype.itemsize
     if len(data) != expected_size:
         raise ProtocolError(
             f"array payload has {len(data)} bytes; shape and dtype require {expected_size}"
@@ -156,7 +157,7 @@ def _encode(value: Any) -> Any:
             _TYPE_KEY: "ndarray",
             "dtype": contiguous.dtype.str,
             "shape": list(contiguous.shape),
-            "data": base64.b64encode(contiguous.tobytes()).decode("ascii"),
+            "data": base64.b64encode(memoryview(contiguous.reshape(-1).view(np.uint8))).decode("ascii"),
         }
     if isinstance(value, np.generic):
         return value.item()
