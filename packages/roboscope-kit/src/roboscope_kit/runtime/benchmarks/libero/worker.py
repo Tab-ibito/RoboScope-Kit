@@ -84,7 +84,8 @@ class PolicyActionQueue:
                 chunk = client.act(request).actions
             self.inference_wait_s += time.perf_counter() - started
             self.actions = chunk.reshape(1, -1) if chunk.ndim == 1 else chunk
-        action = self.actions[0].copy()
+        # The chunk is owned by this queue and never reused, so its rows need no copy.
+        action = self.actions[0]
         self.actions = self.actions[1:]
         return action
 
@@ -160,8 +161,9 @@ def build_observation(
             _state_vector(observation, "robot0_eef_quat", 4),
             _state_vector(observation, "robot0_gripper_qpos", 2),
             _state_vector(observation, "robot0_joint_pos", 7),
-        )
-    ).astype(np.float32, copy=False)
+        ),
+        dtype=np.float32,
+    )
     return Observation(
         episode_id=episode_id,
         step=step,
@@ -176,9 +178,7 @@ def build_observation(
 
 
 def _state_vector(observation: dict, name: str, expected: int) -> np.ndarray:
-    if name not in observation:
-        raise KeyError(f"LIBERO observation is missing {name!r}")
-    value = np.asarray(observation[name], dtype=np.float32).reshape(-1)
+    value = np.ravel(observation[name])
     if value.size != expected:
         raise ValueError(f"LIBERO observation {name!r} has {value.size} values; expected {expected}")
     return value

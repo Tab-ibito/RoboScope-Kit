@@ -48,7 +48,9 @@ def send_message(connection: socket.socket, message: dict[str, Any], encoding: E
         raise ValueError(f"unknown protocol encoding {encoding!r}")
     if len(payload) > MAX_MESSAGE_BYTES:
         raise ProtocolError(f"message is {len(payload)} bytes; maximum is {MAX_MESSAGE_BYTES}")
-    connection.sendall(prefix + _HEADER.pack(len(payload)) + payload)
+    # Send the small header separately instead of concatenating, which would copy the whole payload.
+    connection.sendall(prefix + _HEADER.pack(len(payload)))
+    connection.sendall(payload)
 
 
 def receive_message(connection: socket.socket) -> dict[str, Any] | None:
@@ -85,7 +87,7 @@ def receive_frame(connection: socket.socket) -> tuple[dict[str, Any], Encoding] 
         except Exception as exc:
             raise ProtocolError(f"invalid MessagePack message: {exc}") from exc
     else:
-        decoded = _decode(json.loads(payload.decode("utf-8")))
+        decoded = _decode(json.loads(payload))
     if not isinstance(decoded, dict):
         raise ProtocolError("message root must be an object")
     return decoded, encoding
@@ -97,16 +99,26 @@ def validate_version(message: dict[str, Any]) -> None:
         raise ProtocolError(f"unsupported protocol version {version!r}; expected {PROTOCOL_VERSION}")
 
 
-def _receive_exact(connection: socket.socket, size: int) -> bytes | None:
-    chunks: list[bytes] = []
-    remaining = size
-    while remaining:
-        chunk = connection.recv(remaining)
-        if not chunk:
-            return None if remaining == size else b"".join(chunks)
-        chunks.append(chunk)
-        remaining -= len(chunk)
-    return b"".join(chunks)
+def _receive_exact(connection: socket.socket, size: int) -> bytearray | None:
+    """Read ``size`` bytes into one buffer; ``None`` if the peer closed before the first byte.
+
+    A shorter buffer means the peer closed mid-read. Receiving in place avoids joining
+    the chunks of a large frame, which would copy it once more.
+    """
+
+    buffer = bytearray(size)
+    view = memoryview(buffer)
+    received = 0
+    while received < size:
+        count = connection.recv_into(view[received:])
+        if not count:
+            if not received:
+                return None
+            del view
+            del buffer[received:]
+            return buffer
+        received += count
+    return buffer
 
 
 def _msgpack_default(value: Any) -> Any:

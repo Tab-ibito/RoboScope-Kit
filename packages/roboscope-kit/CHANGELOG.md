@@ -2,6 +2,18 @@
 
 Platform-only release notes from earlier versions are omitted; other changes relevant to the Kit are retained.
 
+## 0.8.0b68 - 2026-11-16
+
+- Send frame headers and payloads without concatenating them, and receive each frame into one
+  preallocated buffer instead of joining chunks, removing two whole-payload copies per message.
+- Return a shared no-op context from disabled timing spans, captures and batch metrics, which run on
+  every simulator step and Policy request.
+- Cache each benchmark spec's feature lookup and required feature names for observation validation.
+- LIBERO Workers return action rows without copying and convert proprioception in one concatenation;
+  remove the unused camera-gate installation flag.
+- StarVLA example: resolve the state-key layout once at load, read server-validated features directly
+  and leave the finite-action check to the Policy Server.
+
 ## 0.8.0b67 - 2026-11-16
 
 - Avoid intermediate array bytes during JSON encoding. Keep decoded arrays writable and

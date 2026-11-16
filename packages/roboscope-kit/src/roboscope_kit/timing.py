@@ -12,7 +12,7 @@ import os
 import threading
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from contextvars import ContextVar
 from pathlib import Path
 
@@ -21,6 +21,8 @@ ENABLED = bool(DIRECTORY)
 _local = threading.local()
 _lock = threading.Lock()
 _collected: ContextVar[dict[str, float] | None] = ContextVar("timing_collected", default=None)
+# Shared no-op context: disabled spans sit on per-step and per-request paths.
+_DISABLED = nullcontext()
 
 
 @contextmanager
@@ -34,11 +36,12 @@ def collect() -> Iterator[dict[str, float]]:
         _collected.reset(token)
 
 
+def capture(kind: str, **metadata: object) -> AbstractContextManager[None]:
+    return _capture(kind, metadata) if ENABLED else _DISABLED
+
+
 @contextmanager
-def capture(kind: str, **metadata: object) -> Iterator[None]:
-    if not ENABLED:
-        yield
-        return
+def _capture(kind: str, metadata: dict[str, object]) -> Iterator[None]:
     directory = Path(DIRECTORY)
     if not directory.is_absolute():
         raise ValueError("ROBOSCOPE_TIMING_DIR must be absolute")
@@ -68,11 +71,14 @@ def add(name: str, seconds: float) -> None:
         entry["count"] += 1
 
 
-@contextmanager
-def span(name: str) -> Iterator[None]:
+def span(name: str) -> AbstractContextManager[None]:
     if not ENABLED and _collected.get() is None:
-        yield
-        return
+        return _DISABLED
+    return _span(name)
+
+
+@contextmanager
+def _span(name: str) -> Iterator[None]:
     started = time.perf_counter()
     try:
         yield

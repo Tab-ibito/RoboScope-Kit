@@ -83,6 +83,14 @@ class InferenceConfig:
 
 
 @dataclass(frozen=True)
+class _StateLayout:
+    """Order and raw-state slices of the processor's state keys, resolved once at load."""
+
+    slices: tuple[tuple[str, slice], ...]
+    dimension: int
+
+
+@dataclass(frozen=True)
 class _PolicyRuntime:
     framework: torch.nn.Module
     norm_processor: PolicyNormProcessor
@@ -91,6 +99,7 @@ class _PolicyRuntime:
     predict: Callable[..., Mapping[str, Any]]
     model_timing: ModelTiming | None
     max_batch_size: int
+    state_layout: _StateLayout | None
 
 
 class StarVLAPolicy(Policy):
@@ -166,8 +175,10 @@ class StarVLAPolicy(Policy):
         model_timing = ModelTiming(framework) if timing.ENABLED else None
         if model_timing is not None:
             predict = model_timing.wrap_prediction(predict)
+        state_layout = _state_layout(norm_processor) if config.inputs.state is not None else None
         return _PolicyRuntime(
             framework, norm_processor, config, image_preprocessor, predict, model_timing, max_batch_size,
+            state_layout,
         )
 
     def reset(self, _context: EpisodeContext) -> None:
@@ -184,12 +195,7 @@ class StarVLAPolicy(Policy):
                 f"StarVLA batch size {batch_size} must be between 1 and {runtime.max_batch_size}"
             )
         with timing.span("policy.example_build"):
-            examples = [
-                _build_example(
-                    item.features, runtime.config.inputs, runtime.norm_processor, runtime.image_preprocessor,
-                )
-                for item in observations
-            ]
+            examples = [_build_example(item.features, runtime) for item in observations]
         with timing.span("policy.predict_total"):
             output = runtime.predict(examples=examples, **runtime.config.kwargs)
         with timing.span("policy.postprocess"):
@@ -225,16 +231,13 @@ def _postprocess_batch(
         raise ValueError(f"StarVLA returned normalized action shape {normalized.shape}; expected {expected}")
     # The pinned processor accepts only (T, D). Keep its per-chunk semantics, then
     # perform conversion, transforms and validation once across the whole batch.
-    actions = np.array(
-        [runtime.norm_processor.unapply_actions(row) for row in normalized],
-        dtype=np.float32, copy=True, order="C",
-    )
+    # np.array() of the row list allocates one new C-ordered float32 array that the transforms
+    # may modify in place. Finiteness is checked by the Policy Server for every returned chunk.
+    actions = np.array([runtime.norm_processor.unapply_actions(row) for row in normalized], dtype=np.float32)
     if actions.shape != expected:
         raise ValueError(f"StarVLA returned unnormalized action shape {actions.shape}; expected {expected}")
     for transform in runtime.config.transforms:
         transform.apply(actions)
-    if not np.isfinite(actions).all():
-        raise ValueError("StarVLA returned non-finite actions")
     return tuple(ActionChunk(row) for row in actions)
 
 
@@ -359,21 +362,16 @@ def _parse_action_transform(value: Any, action_dim: int) -> ActionTransform:
     return ActionTransform(operation=operation, index=index, parameters=parameters)
 
 
-def _build_example(
-    features: Mapping[str, Any],
-    config: InputConfig,
-    norm_processor: Any,
-    image_preprocessor: ImagePreprocessor,
-) -> dict[str, Any]:
+def _build_example(features: Mapping[str, Any], runtime: _PolicyRuntime) -> dict[str, Any]:
+    # The Policy Server has already validated every feature's presence, type, dtype and shape.
+    config = runtime.config.inputs
+    preprocess = runtime.image_preprocessor
     example: dict[str, Any] = {
-        "image": [image_preprocessor(_array_feature(features, name)) for name in config.images],
+        "image": [preprocess(features[name]) for name in config.images],
         "lang": _string_feature(features, config.language),
     }
-    if config.state is not None:
-        example["state"] = _prepare_state(
-            _array_feature(features, config.state),
-            norm_processor,
-        )
+    if runtime.state_layout is not None:
+        example["state"] = _prepare_state(features[config.state], runtime.norm_processor, runtime.state_layout)
     return example
 
 
@@ -413,39 +411,35 @@ def _resize_calvin_image(image: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(image_tools.convert_to_uint8(resized))
 
 
-def _prepare_state(state: np.ndarray, norm_processor: Any) -> np.ndarray:
-    state = np.asarray(state)
-    if state.ndim == 1:
-        state = state[None, :]
-    if state.ndim != 2 or state.shape[0] != 1:
-        raise ValueError(f"StarVLA state input must have shape (D,) or (1, D); received {state.shape}")
-
+def _state_layout(norm_processor: Any) -> _StateLayout:
     state_keys = tuple(norm_processor.state_keys)
     state_key_dims = getattr(norm_processor, "_state_key_dims", None)
     if not state_keys or not isinstance(state_key_dims, Mapping):
         raise RuntimeError("StarVLA normalization processor does not expose state feature dimensions")
-
-    ordered_dims = tuple(_state_key_dimension(state_key_dims, key) for key in state_keys)
-    expected_dim = sum(ordered_dims)
-    if state.shape[1] != expected_dim:
-        raise ValueError(
-            f"StarVLA raw state dimension is {state.shape[1]}; expected {expected_dim} "
-            f"for configured state keys {state_keys}"
-        )
-
-    values: dict[str, np.ndarray] = {}
+    slices = []
     cursor = 0
-    for key, dimension in zip(state_keys, ordered_dims, strict=True):
-        values[key] = np.ascontiguousarray(state[:, cursor : cursor + dimension])
+    for key in state_keys:
+        dimension = _state_key_dimension(state_key_dims, key)
+        slices.append((key, slice(cursor, cursor + dimension)))
         cursor += dimension
-    transformed = norm_processor.transform.apply(values)
+    return _StateLayout(tuple(slices), cursor)
+
+
+def _prepare_state(state: np.ndarray, norm_processor: Any, layout: _StateLayout) -> np.ndarray:
+    if state.ndim == 1:
+        state = state[None, :]
+    if state.shape != (1, layout.dimension):
+        keys = tuple(key for key, _ in layout.slices)
+        raise ValueError(
+            f"StarVLA raw state must have shape ({layout.dimension},) or (1, {layout.dimension}) "
+            f"for configured state keys {keys}; received {state.shape}"
+        )
+    # Column slices of one C-ordered row are already contiguous views.
+    transformed = norm_processor.transform.apply({key: state[:, part] for key, part in layout.slices})
     if "state" in transformed:
         prepared = _numpy_value(transformed["state"])
     else:
-        missing = [key for key in state_keys if key not in transformed]
-        if missing:
-            raise RuntimeError(f"StarVLA state transform removed configured keys: {missing}")
-        prepared = np.concatenate([_numpy_value(transformed[key]) for key in state_keys], axis=-1)
+        prepared = np.concatenate([_numpy_value(transformed[key]) for key, _ in layout.slices], axis=-1)
     if prepared.ndim != 2 or prepared.shape[0] != 1:
         raise ValueError(f"StarVLA transformed state must have shape (1, D); received {prepared.shape}")
     return np.ascontiguousarray(prepared)
@@ -542,13 +536,6 @@ def _finite_number(config: Mapping[str, Any], key: str) -> float:
     if not math.isfinite(number):
         raise ValueError(f"StarVLA config field {key} must be finite")
     return number
-
-
-def _array_feature(features: Mapping[str, Any], name: str) -> np.ndarray:
-    value = features.get(name)
-    if not isinstance(value, np.ndarray):
-        raise TypeError(f"StarVLA input feature {name!r} must be a numpy array")
-    return np.ascontiguousarray(value)
 
 
 def _string_feature(features: Mapping[str, Any], name: str) -> str:

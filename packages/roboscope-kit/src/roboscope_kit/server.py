@@ -13,7 +13,7 @@ import traceback
 import uuid
 from collections.abc import Iterator
 from concurrent.futures import Future
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from enum import Enum
 from pathlib import Path
 from queue import Empty, Queue
@@ -197,12 +197,11 @@ class PolicyServer:
     def _handle_action_batch(self, pending: list[tuple[dict[str, Any], Future]]) -> None:
         valid = []
         for request, future in pending:
-            try:
-                validate_version(request)
-            except ProtocolError:
-                future.set_result(self._handle(request))
-            else:
+            if request.get("version") == PROTOCOL_VERSION:
                 valid.append((request, future))
+            else:
+                # _handle() turns the version mismatch into this request's own error response.
+                future.set_result(self._handle(request))
         if len(valid) == 1:
             request, future = valid[0]
             future.set_result(self._handle(request))
@@ -223,11 +222,13 @@ class PolicyServer:
                               "error": {**response["error"], "operation": "act"}}
                 future.set_result(result)
 
-    @contextmanager
-    def _measure_batch(self, size: int) -> Iterator[None]:
+    def _measure_batch(self, size: int) -> AbstractContextManager[None]:
         if self._batch_metrics_path is None:
-            yield
-            return
+            return nullcontext()
+        return self._record_batch(self._batch_metrics_path, size)
+
+    @contextmanager
+    def _record_batch(self, path: Path, size: int) -> Iterator[None]:
         ok = False
         with timing.collect() as durations:
             try:
@@ -235,7 +236,7 @@ class PolicyServer:
                     yield
                 ok = True
             finally:
-                with self._batch_metrics_path.open("a") as stream:
+                with path.open("a") as stream:
                     stream.write(json.dumps({
                         "size": size, "policy_wall_s": durations["server.batch"], "ok": ok,
                         "prediction_wall_s": durations.get("policy.predict_total"),

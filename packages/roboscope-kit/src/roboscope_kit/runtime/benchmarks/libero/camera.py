@@ -26,7 +26,6 @@ class ChunkCameraGate:
 
     def __init__(self, counters: dict[str, int]) -> None:
         self.required = True
-        self._installing = False
         self.counters = counters
 
     def _sensor(self, original, initial_image: np.ndarray):
@@ -35,8 +34,6 @@ class ChunkCameraGate:
         @wraps(original)
         def sample(obs_cache):
             nonlocal cached
-            if self._installing:
-                return cached
             if self.required:
                 with timing.span("worker.rgb_render"):
                     cached = original(obs_cache)

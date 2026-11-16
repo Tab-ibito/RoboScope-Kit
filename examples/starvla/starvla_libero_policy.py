@@ -38,9 +38,7 @@ class StarVLALiberoPolicy(StarVLAPolicy):
     def act(self, observation: Observation) -> ActionChunk:
         runtime = self._require_runtime()
 
-        example = _build_example(
-            observation.features, runtime.config.inputs, runtime.norm_processor, runtime.image_preprocessor
-        )
+        example = _build_example(observation.features, runtime)
         output = runtime.predict(examples=[example], **runtime.config.kwargs)
         normalized = np.asarray(output["normalized_actions"])
         if normalized.shape != (1, 8, 7):
@@ -48,8 +46,6 @@ class StarVLALiberoPolicy(StarVLAPolicy):
         actions = decode_actions(normalized[0], runtime.framework.norm_stats["franka"]["action"])
         for transform in runtime.config.transforms:
             transform.apply(actions)
-        if not np.isfinite(actions).all():
-            raise ValueError("StarVLA returned non-finite actions")
         return ActionChunk(actions.astype(np.float32, copy=False))
 
 

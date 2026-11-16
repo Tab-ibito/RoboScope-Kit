@@ -276,23 +276,18 @@ def validate_observation(
     benchmark: BenchmarkSpec,
     capabilities: PolicyCapabilities,
 ) -> None:
-    specs = {feature.name: feature for feature in benchmark.features}
-    unknown = [name for name in observation.features if name not in specs]
+    specs = benchmark.feature_specs
+    features = observation.features
+    unknown = [name for name in features if name not in specs]
     if unknown:
-        names = ", ".join(sorted(unknown))
-        raise ValueError(f"observation contains undeclared benchmark features: {names}")
-    missing_benchmark_features = [
-        feature.name
-        for feature in benchmark.features
-        if feature.required and feature.name not in observation.features
-    ]
-    if missing_benchmark_features:
-        names = ", ".join(sorted(missing_benchmark_features))
-        raise ValueError(f"observation is missing required benchmark features: {names}")
-    missing = [name for name in capabilities.required_features if name not in observation.features]
+        raise ValueError(f"observation contains undeclared benchmark features: {', '.join(sorted(unknown))}")
+    missing = [name for name in benchmark.required_feature_names if name not in features]
+    if missing:
+        raise ValueError(f"observation is missing required benchmark features: {', '.join(sorted(missing))}")
+    missing = [name for name in capabilities.required_features if name not in features]
     if missing:
         raise ValueError(f"observation is missing required policy features: {', '.join(sorted(missing))}")
-    for name, value in observation.features.items():
+    for name, value in features.items():
         spec = specs[name]
         if spec.kind is FeatureKind.LANGUAGE:
             if not isinstance(value, str):
