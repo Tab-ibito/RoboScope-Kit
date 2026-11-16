@@ -1,6 +1,6 @@
 # RoboScope Kit Profiling
 
-Updated: 2026-11-09
+Updated: 2026-11-16
 
 This document explains how to use `--profile` to see where an evaluation's time goes, and records what
 profiling has found so far. After every profiling run, add its findings to the benchmark's own documentation and link them from
@@ -78,7 +78,7 @@ is not in the report, only the round-trip time of each request.
 |---|---|---|
 | RoboDojo | Yes | Yes (2026-11-05, K=1 and K=3) |
 | LIBERO, LIBERO-Plus | Yes | Not yet |
-| LIBERO-Pro | Yes | Nsight capture not yet documented; opt-in stage timing is available |
+| LIBERO-Pro | Yes | 2026-11-16: optimized MPS-on Worker/Policy process-tree trace |
 | MetaWorld | Yes | Not yet |
 | robomimic | Yes | Not yet |
 | RoboCasa GR-1 Tabletop | Yes | Not yet |
@@ -98,10 +98,13 @@ is not in the report, only the round-trip time of each request.
 
 ## Findings
 
+- [LIBERO-Pro optimized MPS profiling, 2026-11-16](../../../benchmarks/libero_pro/PROFILE_2026-11-16.md):
+  K=12/g=3, cap=1, 12 Workers and three Policy replicas in a common 30-second window.
+
 LIBERO-Pro has [stage-timing instructions](../../../benchmarks/libero_pro/README.md#stage-timing)
 for Worker, RPC and Policy/model phases. Its [draft full-matrix comparison](../../../benchmarks/libero_pro/FIXED_BASELINE_2026-11-10.md)
-was unprofiled; throughput and device-wide utilization alone do not establish a bottleneck. Worker and
-Policy Server Nsight trace findings remain pending.
+was unprofiled; throughput and device-wide utilization alone do not establish a bottleneck. The [2026-11-16 MPS-on trace](../../../benchmarks/libero_pro/PROFILE_2026-11-16.md)
+covers Worker and Policy processes together; it is diagnostic, not speedup evidence.
 
 Each benchmark keeps its profiling findings in its own documentation, newest first, with the date, machine,
 configuration, and Kit version:

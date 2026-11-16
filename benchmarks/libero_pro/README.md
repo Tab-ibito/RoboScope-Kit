@@ -123,6 +123,9 @@ scope. This is not a proof for all episodes, sensor configurations or closed-loo
 
 ## Stage timing
 
+The [2026-11-16 optimized MPS profile](PROFILE_2026-11-16.md) captures Worker and
+Policy activity together and reports stage timings, CUDA activity and measurement limits.
+
 Set `ROBOSCOPE_TIMING_DIR` to a fresh absolute directory before launching the controller, and ensure
 the Policy environment inherits it. Install the same Kit revision in controller and model environments.
 Use separate directories for warmup and formal execution. `worker-<pid>.jsonl` records each Work Item;
